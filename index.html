@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Local Earth</title>
+    
+    <!-- CesiumJS CDN -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
+    <style>
+        :root {
+            --apple-blue: #007AFF;
+            --glass-bg: rgba(255, 255, 255, 0.75);
+            --glass-border: rgba(255, 255, 255, 0.9);
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+            --text-primary: #1c1c1e;
+            --text-secondary: #8e8e93;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body, html, #cesiumContainer {
+            width: 100%; height: 100%;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #000;
+        }
+
+        /* Make map colors look more like Apple Maps (muted, bright) */
+        canvas {
+            filter: saturate(0.85) brightness(1.05) contrast(1.1);
+        }
+
+        /* Hide default Cesium UI */
+        .cesium-viewer-bottom, .cesium-viewer-toolbar, .cesium-viewer-animationContainer, .cesium-viewer-timelineContainer {
+            display: none !important;
+        }
+
+        /* --- Apple Maps Style UI Overlay --- */
+        .glass {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            box-shadow: var(--shadow);
+            border-radius: 16px;
+            color: var(--text-primary);
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: auto;
+        }
+
+        .info-card {
+            padding: 12px 16px;
+            width: 200px;
+        }
+
+        .info-card h3 {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .info-card p {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            background: #34C759;
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px #34C759;
+        }
+
+        .status-dot.searching {
+            background: #FF9500;
+            box-shadow: 0 0 8px #FF9500;
+            animation: pulse-dot 1.5s infinite;
+        }
+
+        @keyframes pulse-dot {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+
+        .controls-right {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .btn-circle {
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: transform 0.2s, background 0.2s;
+            user-select: none;
+        }
+
+        .btn-circle:active {
+            transform: scale(0.9);
+            background: rgba(230, 230, 230, 0.8);
+        }
+
+        .btn-circle.active {
+            background: var(--apple-blue);
+            color: white;
+            border-color: var(--apple-blue);
+        }
+
+        .bottom-bar {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            pointer-events: auto;
+        }
+
+        .slider-container {
+            width: 100%;
+            max-width: 350px;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .slider-icon { font-size: 18px; }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 6px;
+            background: rgba(0,0,0,0.1);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 24px; height: 24px;
+            background: white;
+            border-radius: 50%;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            cursor: pointer;
+        }
+
+        .time-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            min-width: 45px;
+            text-align: right;
+        }
+
+        /* Loading Screen */
+        #loader {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            transition: opacity 0.5s;
+        }
+        #loader.hidden { opacity: 0; pointer-events: none; }
+        .loader-spinner {
+            width: 40px; height: 40px;
+            border: 3px solid #e5e5ea;
+            border-top-color: var(--apple-blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #loader p { margin-top: 16px; color: var(--text-secondary); font-size: 14px; font-weight: 500; }
+    </style>
+</head>
+<body>
+
+    <div id="loader">
+        <div class="loader-spinner"></div>
+        <p>Acquiring GPS & 3D Tiles...</p>
+    </div>
+
+    <div id="cesiumContainer"></div>
+
+    <div id="ui-overlay">
+        <div class="top-bar">
+            <div class="info-card glass">
+                <h3><span id="statusDot" class="status-dot searching"></span> Local 3D Earth</h3>
+                <p id="coordsText">Waiting for GPS...</p>
+                <p id="altText">Altitude: --</p>
+            </div>
+            <div class="controls-right">
+                <div id="btnCompass" class="btn-circle glass" title="Compass Mode">🧭</div>
+                <div id="btnLocate" class="btn-circle glass" title="Lock Location">⌖</div>
+            </div>
+        </div>
+
+        <div class="bottom-bar">
+            <div class="slider-container glass">
+                <span class="slider-icon">☀️</span>
+                <input type="range" id="timeSlider" min="0" max="1440" value="720">
+                <span class="time-label" id="timeLabel">12:00</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ---------------------------------------------------------
+        // CONFIGURATION & TOKEN
+        // Note: This is the public Cesium demo token. For production,
+        // sign up for a free account at https://ion.cesium.com/
+        // ---------------------------------------------------------
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlYWE1OWUxNy1mMWZiLTQzYjYtYTQ0OS1kMWFjYmFkNjc5YzciLCJpZCI6NTc3MzMsImlhdCI6MTYyNzg0NTE4Mn0.XcKpgANiY19MC4bdFUXMVEBToBmqS8kuYpUlxJHYZxk';
+
+        let viewer;
+        let userPosition = null;
+        let isLocked = true;
+        let isCompassMode = false;
+        let deviceHeading = 0;
+
+        async function init() {
+            // 1. Initialize Cesium Viewer
+            viewer = new Cesium.Viewer('cesiumContainer', {
+                terrain: Cesium.Terrain.fromWorldTerrain(),
+                baseLayerPicker: false,
+                geocoder: false,
+                homeButton: false,
+                sceneModePicker: false,
+                navigationHelpButton: false,
+                animation: false,
+                timeline: false,
+                fullscreenButton: false,
+                vrButton: false,
+                infoBox: false,
+                selectionIndicator: false,
+                skyBox: false,
+                skyAtmosphere: false,
+                requestRenderMode: false,
+                contextOptions: { webgl: { alpha: true } }
+            });
+
+            // Remove default imagery and add clean OSM (Apple Maps look)
+            viewer.imageryLayers.removeAll();
+            const osmImagery = new Cesium.OpenStreetMapImageryProvider({
+                url: 'https://a.tile.openstreetmap.org/'
+            });
+            viewer.imageryLayers.addImageryProvider(osmImagery);
+
+            // Enable Lighting for Shadows
+            viewer.scene.globe.enableLighting = true;
+            viewer.scene.highDynamicRange = false;
+            viewer.scene.globe.depthTestAgainstTerrain = true;
+
+            // 2. Load 3D Buildings API (OSM 3D Tiles)
+            try {
+                const osmBuildings = await Cesium.createOsmBuildingsAsync();
+                osmBuildings.style = new Cesium.Cesium3DTileStyle({
+                    color: "color('white')", // Clean Apple-style buildings
+                    show: true
+                });
+                viewer.scene.primitives.add(osmBuildings);
+            } catch (error) {
+                console.error("Error loading 3D Buildings:", error);
+            }
+
+            // 3. Setup GPS
+            setupGPS();
+            
+            // 4. Setup UI Listeners
+            setupUI();
+
+            // Hide Loader
+            setTimeout(() => {
+                document.getElementById('loader').classList.add('hidden');
+            }, 1500);
+        }
+
+        function setupGPS() {
+            if ("geolocation" in navigator) {
+                navigator.geolocation.watchPosition(
+                    (pos) => {
+                        const { latitude, longitude, accuracy, altitude } = pos.coords;
+                        userPosition = Cesium.Cartesian3.fromDegrees(longitude, latitude, altitude || 0);
+                        
+                        updateUI(latitude, longitude, altitude, accuracy);
+                        updateUserEntity(latitude, longitude, altitude || 0);
+
+                        if (isLocked) {
+                            flyToUser(longitude, latitude, altitude || 0);
+                        }
+                    },
+                    (err) => {
+                        console.warn("GPS Error:", err.message);
+                        document.getElementById('coordsText').innerText = "GPS Denied / Error";
+                        // Fallback to default location (San Francisco)
+                        userPosition = Cesium.Cartesian3.fromDegrees(-122.4194, 37.7749, 0);
+                        flyToUser(-122.4194, 37.7749, 0);
+                    },
+                    { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+                );
+            } else {
+                alert("Geolocation is not supported by your browser.");
+            }
+        }
+
+        let userEntity, pulseEntity;
+        function updateUserEntity(lon, lat, alt) {
+            if (!userEntity) {
+                // Solid Blue Dot
+                userEntity = viewer.entities.add({
+                    name: "User",
+                    position: new Cesium.CallbackProperty(() => userPosition, false),
+                    point: {
+                        pixelSize: 12,
+                        color: Cesium.Color.fromCssColorString('#007AFF'),
+                        outlineColor: Cesium.Color.WHITE,
+                        outlineWidth: 3,
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY
+                    }
+                });
+
+                // Pulsing Radar Ring
+                pulseEntity = viewer.entities.add({
+                    position: new Cesium.CallbackProperty(() => userPosition, false),
+                    ellipse: {
+                        semiMinorAxis: new Cesium.CallbackProperty(() => 20 + Math.sin(Date.now() / 300) * 10, false),
+                        semiMajorAxis: new Cesium.CallbackProperty(() => 20 + Math.sin(Date.now() / 300) * 10, false),
+                        material: Cesium.Color.fromCssColorString('#007AFF').withAlpha(0.3),
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY
+                    }
+                });
+            }
+        }
+
+        let hasFlownOnce = false;
+        function flyToUser(lon, lat, alt) {
+            const targetAlt = Math.max(alt + 50, 50); // Keep camera above ground
+            const dest = Cesium.Cartesian3.fromDegrees(lon, lat, targetAlt);
+            
+            if (!hasFlownOnce) {
+                viewer.camera.flyTo({
+                    destination: dest,
+                    orientation: {
+                        heading: Cesium.Math.toRadians(0),
+                        pitch: Cesium.Math.toRadians(-45), // 3D Angle
+                        roll: 0
+                    },
+                    duration: 2
+                });
+                hasFlownOnce = true;
+            } else if (isLocked) {
+                // Smooth tracking
+                viewer.camera.lookAt(dest, new Cesium.HeadingPitchRange(
+                    isCompassMode ? Cesium.Math.toRadians(deviceHeading) : Cesium.Math.toRadians(0), 
+                    Cesium.Math.toRadians(-45), 
+                    150
+                ));
+            }
+        }
+
+        function updateUI(lat, lon, alt, acc) {
+            document.getElementById('statusDot').classList.remove('searching');
+            document.getElementById('coordsText').innerText = `${lat.toFixed(5)}, ${lon.toFixed(5)} (±${acc.toFixed(0)}m)`;
+            document.getElementById('altText').innerText = `Altitude: ${alt ? alt.toFixed(1) + 'm' : 'Ground Level'}`;
+        }
+
+        function setupUI() {
+            // Locate Button
+            const btnLocate = document.getElementById('btnLocate');
+            btnLocate.classList.add('active'); // Locked by default
+            btnLocate.addEventListener('click', () => {
+                isLocked = !isLocked;
+                btnLocate.classList.toggle('active', isLocked);
+                if (isLocked && userPosition) {
+                    viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); // Reset
+                    const cartographic = Cesium.Cartographic.fromCartesian(userPosition);
+                    flyToUser(Cesium.Math.toDegrees(cartographic.longitude), Cesium.Math.toDegrees(cartographic.latitude), cartographic.height);
+                } else {
+                    viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); // Free roam
+                }
+            });
+
+            // Compass Button (Device Orientation)
+            const btnCompass = document.getElementById('btnCompass');
+            btnCompass.addEventListener('click', () => {
+                isCompassMode = !isCompassMode;
+                btnCompass.classList.toggle('active', isCompassMode);
+                if (isCompassMode) {
+                    requestCompassPermission();
+                }
+            });
+
+            // Time Slider (Sunlight & Shadows)
+            const timeSlider = document.getElementById('timeSlider');
+            const timeLabel = document.getElementById('timeLabel');
+            
+            // Set slider to current local time
+            const now = new Date();
+            const currentMinutes = now.getHours() * 60 + now.getMinutes();
+            timeSlider.value = currentMinutes;
+            updateTimeOfDay(currentMinutes);
+
+            timeSlider.addEventListener('input', (e) => {
+                updateTimeOfDay(parseInt(e.target.value));
+            });
+        }
+
+        function updateTimeOfDay(minutes) {
+            const hours = Math.floor(minutes / 60);
+            const mins = minutes % 60;
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            const h12 = hours % 12 || 12;
+            document.getElementById('timeLabel').innerText = `${h12}:${mins.toString().padStart(2, '0')} ${ampm}`;
+
+            // Update Cesium Clock for Sun Position
+            const date = new Date();
+            date.setHours(hours, mins, 0, 0);
+            viewer.clock.currentTime = Cesium.JulianDate.fromDate(date);
+        }
+
+        function requestCompassPermission() {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                // iOS 13+ requires permission
+                DeviceOrientationEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                window.addEventListener('deviceorientation', handleOrientation);
+            }
+        }
+
+        function handleOrientation(event) {
+            // Alpha is the compass heading (0-360)
+            if (event.alpha !== null) {
+                deviceHeading = 360 - event.alpha; 
+            }
+        }
+
+        // Start App
+        init();
+    </script>
+</body>
+</html>
